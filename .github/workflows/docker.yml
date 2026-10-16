@@ -19,8 +19,12 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt pytest
       - run: python -m compileall -q fe_gradiva
-      - run: pytest -q
+      - run: python -m pytest -q
       - run: docker build -t fe-chatgpt:test .
+      - name: Verify installed MCP runtime in image
+        run: |
+          mkdir -p "$RUNNER_TEMP/fe-root" "$RUNNER_TEMP/fe-index"
+          docker run --rm -v "$RUNNER_TEMP/fe-root:/data/FE:ro" -v "$RUNNER_TEMP/fe-index:/var/lib/fe-index" fe-chatgpt:test python -c 'import fe_gradiva.server; print("MCP runtime import OK")'
   docker:
     needs: test
     if: github.event_name != 'pull_request'
