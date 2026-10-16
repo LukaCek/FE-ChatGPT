@@ -1,0 +1,51 @@
+# TrueNAS SCALE 25.10 — replace tunnel_TVOJ_ID only.
+# Copy your existing secret to /mnt/tank/apps/fe-mcp/secrets/openai_api_key.
+# No host ports are exposed; do not point the tunnel to nasui.cekluka.com.
+services:
+  fe-server:
+    image: ghcr.io/lukacek/fe-chatgpt:1.1.0
+    restart: unless-stopped
+    environment:
+      FE_ROOT: /data/FE
+      FE_INDEX: /var/lib/fe-index/fe-index.sqlite3
+      FE_RESCAN_SECONDS: '180'
+    volumes:
+      - /mnt/tank/sync/FE:/data/FE:ro
+      - /mnt/tank/apps/fe-mcp/index:/var/lib/fe-index:rw
+    networks: [fe_internal, fe_egress]
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=3).close()"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 180s
+
+  tunnel-client:
+    image: ghcr.io/openai/tunnel-client:v0.0.16
+    restart: unless-stopped
+    depends_on:
+      fe-server:
+        condition: service_healthy
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: tunnel_TVOJ_ID
+      MCP_SERVER_URL: http://fe-server:8000/mcp
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+      MCP_STARTUP_WAIT_TIMEOUT: 300s
+    command: ["--control-plane.api-key=file:/run/secrets/openai_api_key"]
+    volumes:
+      - /mnt/tank/apps/fe-mcp/secrets/openai_api_key:/run/secrets/openai_api_key:ro
+    networks: [fe_internal, fe_egress]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  fe_internal:
+    internal: true
+  fe_egress:
+    driver: bridge
