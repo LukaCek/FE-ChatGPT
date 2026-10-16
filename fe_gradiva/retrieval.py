@@ -32,15 +32,33 @@ def document_score(path: str, query: str, populated: int, pages: int, kind_hint:
     elif q and q in name: score+=42;reasons.append('filename')
     elif tokens and all(t in path.casefold() for t in tokens): score+=24;reasons.append('name_tokens')
     elif tokens and any(t in path.casefold() for t in tokens): score+=8;reasons.append('partial_name')
+    if not reasons: return 0.0, []
     if kind_hint and kind_hint==kind(path): score+=25;reasons.append('matching_kind')
     if pages>=200 and populated==0: score-=55;reasons.append('empty_template')
     elif populated: score+=8;reasons.append('populated_pages')
     return score, reasons
 
 
+EXERCISE_HEADING = re.compile(
+    r'(?im)^\s*(?:POGLAVJE\s*:\s*\d+\s*)?'
+    r'(?:VAJA|NALOGA|EXERCISE)\s*[:#]?\s*'
+    r'(?P<number>\d{1,3}(?:\.\d{1,3}){1,2})'
+    r'(?![\d.])(?:\s*\([a-zA-Z]\))?'
+)
+
+
+def exercise_parts(ref: str) -> tuple[str, str | None]:
+    match=re.fullmatch(r'(\d{1,3}(?:\.\d{1,3}){1,2})(?:\(([a-zA-Z])\))?',ref.strip())
+    if not match:raise ValueError('Exercise reference must look like 1.1 or 1.1(b)')
+    return match.group(1), (match.group(2).lower() if match.group(2) else None)
+
+
+def SUBPART_MARKER(letter: str) -> re.Pattern:
+    return re.compile(r'(?im)(?<![\w])(?:\(\s*'+re.escape(letter)+r'\s*\)|'+re.escape(letter)+r'\s*\))')
+
+
 def exercise_pattern(ref: str):
-    """Only precise exercise references; no arbitrary regex interpolation."""
-    if len(ref)>32 or not re.fullmatch(r'\d{1,3}(?:\.\d{1,3}){0,2}(?:\([a-zA-Z]\))?',ref):
-        raise ValueError('Exercise reference must look like 1.1 or 1.1(b)')
-    base = ref.replace('(', r'\s*\(?').replace(')', r'\)?')
-    return re.compile(r'(?<![\d.])'+base+r'(?!\d)', flags=re.IGNORECASE)
+    """Backward-compatible exact reference helper, not used for verification."""
+    number, subpart=exercise_parts(ref)
+    suffix=r'\s*\(\s*'+subpart+r'\s*\)' if subpart else ''
+    return re.compile(r'(?<![\d.])'+re.escape(number)+suffix+r'(?![\d.])',flags=re.IGNORECASE)

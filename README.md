@@ -2,7 +2,7 @@
 
 Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncthing continues managing the FE dataset. Google Drive is unnecessary.
 
-**Release:** `1.1.0` (do not assume deployed on TrueNAS until you explicitly update the app).
+**Release:** `1.1.1` (do not assume deployed on TrueNAS until you explicitly update the app).
 
 ## Features
 
@@ -27,7 +27,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
    sudo test -s /mnt/tank/apps/fe-mcp/secrets/openai_api_key && echo 'Tunnel key OK'
    ```
 4. Copy [deploy/truenas-compose.yaml](deploy/truenas-compose.yaml) to **Apps → Installed → fe-gradiva-chatgpt → Edit**, replacing `tunnel_TVOJ_ID` with your already-created OpenAI tunnel ID. Preserve the secret **as a file**; never paste API keys into YAML/GitHub.
-5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.1.0` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
+5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.1.1` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
 6. Verify `fe-server` shows healthy and `tunnel-client` shows Up. ChatGPT → Plugins → FE Gradiva → **Refresh** to discover the new tools.
 
    ```sh
@@ -54,8 +54,17 @@ pytest -q
 docker build -t fe-chatgpt:local .
 ```
 
-GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.1.0` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.0.
+GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.1.1` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.1.
 
 ### Security
 
 The TrueNAS FE mount is read-only. No ports are published on the host. A dedicated internal Docker network connects the MCP service and tunnel client; only the tunnel client reaches the external OpenAI tunnel. Indexed text and page annotations remain on NAS in the mounted SQLite volume. Requests to the MCP plugin share selected content with ChatGPT. Restrict access to your ChatGPT account and tunnel credentials.
+
+
+## v1.1.1 corrections
+
+- Graph-paper occupancy detection compares pages against a blank reference learned only after two reference pages agree. Uncertain pages are **kept**.
+- The existing SQLite notebook rows are automatically reclassified once on upgrade without deleting page labels or source files.
+- Exercise search verifies a numbered **VAJA/NALOGA** heading; a subpart such as `1.1(b)` must be inside that exercise block. Numeric mentions alone no longer count.
+- Document resolution requires a title/path match; kind or page count alone cannot produce an unrelated result.
+- On first startup, `index_status` may show indexing in progress. Wait until it finishes before testing blank-page counts.

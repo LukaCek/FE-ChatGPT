@@ -43,39 +43,51 @@ def text_terms(s: str) -> list[str]:
     return re.findall(r'[^\W_]+', s.casefold(), re.UNICODE)[:12]
 
 
-def populated_by_ink(page: pymupdf.Page) -> bool:
-    """Heuristic for graph-paper notebooks: ignore faint grid/footer page number.
+# v1.1.1: two agreeing unmarked graph-paper pages form the background reference.
+OCCUPANCY_VERSION = "2"
 
-    Renders a small grayscale interior, counts dark ink. Blank numbered A4 graph pages
-    usually have no pixels below 150 (their grid is light gray). Conservative
-    classification: when ambiguous, keep the page instead of discarding it.
+
+def _render_notebook_interior(page: pymupdf.Page) -> bytes:
+    """Exclude the printed page number footer; keep the handwritten header."""
+    r = page.rect
+    clip = pymupdf.Rect(r.x0 + r.width * .04, r.y0 + r.height * .01,
+                        r.x1 - r.width * .04, r.y1 - r.height * .10)
+    return page.get_pixmap(matrix=pymupdf.Matrix(.48, .48), clip=clip,
+                           colorspace=pymupdf.csGRAY, alpha=False).samples
+
+
+def _ink_difference(left: bytes, right: bytes, threshold: int = 24) -> int:
+    if len(left) != len(right):
+        return max(len(left), len(right))
+    return sum(abs(a - b) >= threshold for a, b in zip(left[::3], right[::3]))
+
+
+def notebook_blank_reference(pdf: pymupdf.Document) -> bytes | None:
+    """Only trust a blank template if two late pages visually agree."""
+    total = len(pdf)
+    if total < 4:
+        return None
+    indices = sorted(set(min(total - 1, int(total * f)) for f in (.60, .75, .88, .96)))
+    samples = [_render_notebook_interior(pdf[i]) for i in indices]
+    for i in range(len(samples)):
+        for j in range(i + 1, len(samples)):
+            allowed = max(18, int(len(samples[i]) / 3 * .0007))
+            if _ink_difference(samples[i], samples[j]) <= allowed:
+                return samples[i]
+    return None
+
+
+def populated_by_ink(page: pymupdf.Page, blank_reference: bytes | None = None) -> bool:
+    """Subtract printed graph-paper instead of counting its lines as ink.
+
+    If no trustworthy blank reference exists, retain pages as uncertain rather
+    than silently hide handwriting.
     """
-    r=page.rect
-    clip=pymupdf.Rect(r.x0+r.width*.045, r.y0+r.height*.015,
-                      r.x1-r.width*.04, r.y1-r.height*.075)
-    if clip.is_empty:
-        return True
-    pix=page.get_pixmap(matrix=pymupdf.Matrix(.48,.48),clip=clip,colorspace=pymupdf.csGRAY,alpha=False)
-    data=pix.samples
-    # Two cutoffs help retain lighter pencil notes without mistaking the faint grid.
-    dark=sum(1 for a in data[::2] if a < 153)
-    if dark >= 30:
-        return True
-    soft=sum(1 for a in data[::2] if a < 181)
-    if soft >= 110:
-        return True
-    # Some students write only in light coloured pen: detect chromatic strokes.
-    rgb=page.get_pixmap(matrix=pymupdf.Matrix(.35,.35),clip=clip,colorspace=pymupdf.csRGB,alpha=False)
-    pixels=rgb.samples
-    colored=0
-    for i in range(0,len(pixels)-2,12):
-        r,g,b=pixels[i],pixels[i+1],pixels[i+2]
-        if max(r,g,b)-min(r,g,b)>50 and min(r,g,b)<225:
-            colored+=1
-            if colored>=15:
-                return True
-    return False
-
+    if blank_reference is not None:
+        current = _render_notebook_interior(page)
+        allowed = max(20, int(len(current) / 3 * .0007))
+        return _ink_difference(current, blank_reference) > allowed
+    return True
 
 def fingerprint(page: pymupdf.Page) -> str:
     # Fingerprint visually rather than PDF bytes to survive metadata-only resaves.
@@ -122,6 +134,9 @@ class Index:
             return {'running':True}
         began=time.monotonic()
         count=0; errors=[]
+        with self.db() as c:
+            state=c.execute("SELECT value FROM state WHERE key='occupancy_version'").fetchone()
+        reclassify=not state or state['value']!=OCCUPANCY_VERSION
         with self._status_lock: self._status['running']=True
         try:
             seen=set()
@@ -131,10 +146,10 @@ class Index:
                 try:
                     st=p.stat()
                     with self.db() as c:
-                        existing=c.execute('SELECT mtime_ns,size,error FROM files WHERE path=?',(rel,)).fetchone()
-                    if existing and existing['mtime_ns']==st.st_mtime_ns and existing['size']==st.st_size and not existing['error']:
+                        existing=c.execute('SELECT mtime_ns,size,error,notebook FROM files WHERE path=?',(rel,)).fetchone()
+                    if existing and existing['mtime_ns']==st.st_mtime_ns and existing['size']==st.st_size and not existing['error'] and not (reclassify and existing['notebook']):
                         continue
-                    self._index_file(p,rel,st)
+                    self._index_file(p,rel,st,force_occupancy=reclassify)
                     count+=1
                 except Exception as e:
                     msg=f'{type(e).__name__}: {str(e)[:160]}'
@@ -148,6 +163,9 @@ class Index:
                 for path in old:
                     c.execute('DELETE FROM page_fts WHERE path=?',(path,))
                     c.execute('DELETE FROM files WHERE path=?',(path,))
+            if not errors:
+                with self.db() as c:
+                    c.execute("INSERT INTO state(key,value) VALUES('occupancy_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(OCCUPANCY_VERSION,))
             with self._status_lock:
                 self._status.update(last_scan_utc=utcnow(),last_duration_sec=round(time.monotonic()-began,2),files_updated=count,last_error='; '.join(f'{x["path"]}: {x["error"]}' for x in errors[:3]))
             return {'updated_files':count,'errors':errors}
@@ -158,7 +176,7 @@ class Index:
             with self._status_lock: self._status['running']=False
             self._gate.release()
 
-    def _index_file(self,p:Path,rel:str,stat):
+    def _index_file(self,p:Path,rel:str,stat,force_occupancy:bool=False):
         pages=[]; n=0; notebook=False
         with self.db() as c:
             old_page_cache={r['page']:r for r in c.execute(
@@ -169,15 +187,16 @@ class Index:
                 n=len(pdf)
                 if n>3000: raise ValueError('PDF ima več kot 3000 strani')
                 notebook=is_notebook(rel,n)
+                blank_reference=notebook_blank_reference(pdf) if notebook else None
                 for i,page in enumerate(pdf):
                     fp=fingerprint(page)
                     previous=old_page_cache.get(i+1)
-                    if previous and previous['fingerprint']==fp:
+                    if previous and previous['fingerprint']==fp and not (force_occupancy and notebook):
                         # A full PDF rewrite often changes file mtime but not every page.
                         # Reuse page content and blank detection after visual fingerprint matches.
                         pages.append((i+1,fp,previous['populated'],previous['text']))
                         continue
-                    ink=populated_by_ink(page) if notebook else True
+                    ink=populated_by_ink(page,blank_reference) if notebook else True
                     txt=page.get_text(sort=True).strip() if ink else ''
                     # A page number by itself is not searchable lecture content.
                     if notebook and txt.isdigit() and len(txt)<5: txt=''
@@ -256,7 +275,7 @@ class Index:
         for r in rows:
             if subject and subject.casefold() not in r['path'].casefold():continue
             score,reasons=document_score(r['path'],query,r['populated'],r['pages'],kind_hint)
-            if score<=0 and 'empty_template' not in reasons:continue
+            if not any(x in reasons for x in ('exact_name','filename','name_tokens','partial_name')):continue
             items.append({'path':r['path'],'score':score,'match_reasons':reasons,
                 'kind':kind(r['path']),'pages':r['pages'],'populated_pages':r['populated'],
                 'is_blank_template':r['pages']>=200 and r['populated']==0})
@@ -266,31 +285,47 @@ class Index:
         return {'candidates':items,'ambiguous':ambiguous,
             'guidance':'Open the actual file/page. Do not infer contents from name or mtime.'}
 
-    def find_exercise(self, reference:str,subject:str='',limit:int=12):
-        """Ground exercise number in indexed original text; flag image-only PDFs as unverified."""
-        pattern=exercise_pattern(reference)
+    def find_exercise(self, reference:str, subject:str='', limit:int=12):
+        """Verify exercise numbers in headings and subparts inside their blocks."""
+        from .retrieval import exercise_parts, EXERCISE_HEADING, SUBPART_MARKER
+        number, subpart=exercise_parts(reference)
         subject=subject_path(subject)
+        limit=max(1,min(int(limit),30))
         with self.db() as c:
-            rows=c.execute('''SELECT p.path,p.page,p.text,f.notebook FROM pages p JOIN files f ON f.path=p.path
-                WHERE p.text!='' AND f.error='' ORDER BY f.mtime_ns DESC''').fetchall()
-            image_rows=c.execute('''SELECT f.path,f.pages FROM files f WHERE f.error='' AND f.path LIKE '%.pdf'
+            rows=c.execute("""SELECT p.path,p.page,p.text,f.mtime_ns FROM pages p
+                JOIN files f ON f.path=p.path WHERE p.text!='' AND f.error=''
+                ORDER BY f.mtime_ns DESC""").fetchall()
+            image_rows=c.execute("""SELECT f.path,f.pages FROM files f
+                WHERE f.error='' AND f.path LIKE '%.pdf' AND f.path LIKE '%/Vaje/%'
                 AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.path=f.path AND length(trim(p.text))>6)
-                ORDER BY f.mtime_ns DESC LIMIT 30''').fetchall()
+                ORDER BY f.mtime_ns DESC LIMIT 40""").fetchall()
         found=[]
         for r in rows:
-            if subject and subject.casefold() not in r['path'].casefold():continue
-            for m in list(pattern.finditer(r['text']))[:2]:
-                span=r['text'][max(0,m.start()-110):min(len(r['text']),m.end()+420)]
-                found.append({'path':r['path'],'page':r['page'],'text_excerpt':span,
-                    'kind':kind(r['path']),'verified_reference':True})
-                if len(found)>=max(1,min(int(limit),30)): break
-            if len(found)>=max(1,min(int(limit),30)):break
-        found.sort(key=lambda r: (kind(r['path'])!='exercises',r['path'],r['page']))
+            if subject and subject.casefold() not in r['path'].casefold(): continue
+            page_text=r['text']
+            headings=list(EXERCISE_HEADING.finditer(page_text))
+            for i,heading in enumerate(headings):
+                if heading.group('number')!=number: continue
+                end=headings[i+1].start() if i+1<len(headings) else len(page_text)
+                block=page_text[heading.start():end]
+                if subpart:
+                    mark=SUBPART_MARKER(subpart).search(block)
+                    if not mark: continue
+                    excerpt=block[:min(180,mark.start())]+block[max(0,mark.start()-60):mark.start()+350]
+                else:
+                    excerpt=block[:550]
+                found.append({'path':r['path'],'page':r['page'],
+                              'text_excerpt':excerpt[:600], 'kind':kind(r['path']),
+                              'verified_reference':True,
+                              'verified_subpart':bool(subpart)})
+                if len(found)>=limit:break
+            if len(found)>=limit:break
+        found.sort(key=lambda r:(kind(r['path'])!='exercises',r['path'],r['page']))
         candidates=[{'path':r['path'],'pages':r['pages'],'verification_required':'visual'}
-            for r in image_rows if not subject or subject.casefold() in r['path'].casefold()]
+                    for r in image_rows if not subject or subject.casefold() in r['path'].casefold()]
         return {'reference':reference,'matches':found,
             'image_only_candidates':candidates[:5] if not found else [],
-            'warning':'A matching exercise number does not confirm it is the intended course. Verify original page and values; never invent numbers.'}
+            'warning':'Only explicit exercise headings and subpart markers are verified. For scanned exercises inspect original PDF image and confirm all values.'}
 
     def study_context(self,topic:str,subject:str='',limit:int=12):
         items=self.search(topic,subject,limit=limit)

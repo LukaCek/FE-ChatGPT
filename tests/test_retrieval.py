@@ -37,7 +37,7 @@ def test_resolve_document_does_not_select_empty_template(tmp_path,monkeypatch):
     d.save(z);d.close()
     pdf(d2/'Zvezek.pdf','Elektrotehnika zvezek predavanja')
     monkeypatch.setattr('fe_gradiva.index.is_notebook',lambda name,pages:name.endswith('Zvezek_ELE.pdf'))
-    monkeypatch.setattr('fe_gradiva.index.populated_by_ink',lambda page:False)
+    monkeypatch.setattr('fe_gradiva.index.populated_by_ink',lambda page,blank_reference=None:False)
     idx=Index(StudyFiles(root),tmp_path/'idx.sqlite');idx.scan()
     candidates=idx.resolve_document('zvezek',subject='ELE')['candidates']
     assert candidates[0]['path'].endswith('Predavanja/Zvezek.pdf')
