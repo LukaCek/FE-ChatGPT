@@ -179,12 +179,17 @@ class StudyTracker:
             raise ValueError("contradictory evidence")
         instant = self._now().isoformat()
         with self.db() as conn:
-            prior = conn.execute("SELECT id,concept_id FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+            prior = conn.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             if prior:
                 data = conn.execute("SELECT c.subject,c.topic FROM concepts c WHERE c.id=?",
                                     (prior["concept_id"],)).fetchone()
                 if (_key(data["subject"]),_key(data["topic"])) != (_key(subject),_key(topic)):
                     raise ValueError("attempt_id already used for another concept")
+                if (prior["outcome"] != outcome or prior["assessment"] != assessment or
+                    prior["exercise_ref"] != exercise_ref or prior["evidence"] != evidence or
+                    json.loads(prior["difficulties"]) != details or
+                    prior["source_path"] != source_path):
+                    raise ValueError("attempt_id content mismatch; void incorrect record before retrying")
                 return {"recorded": False, "duplicate": True, "attempt_id": attempt_id,
                         "knowledge": self._knowledge_in_conn(conn,prior["concept_id"])}
             conn.execute("""INSERT OR IGNORE INTO concepts(subject,topic,subject_key,topic_key,created_at)
