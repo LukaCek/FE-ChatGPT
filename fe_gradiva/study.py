@@ -209,18 +209,26 @@ class StudyTracker:
                WHERE a.concept_id=? AND v.attempt_id IS NULL
                ORDER BY a.observed_at,a.rowid""",(concept_id,))]
         successes=[r for r in attempts if _success(r)]
-        latest=attempts[-1] if attempts else None
+        # Self-reports can add context but must NEVER postpone reviews or
+        # override the latest result that was actually observed.
+        observed=[r for r in attempts if r["assessment"]!="self_report"]
+        latest=observed[-1] if observed else attempts[-1] if attempts else None
         counters=Counter(d for row in attempts for d in json.loads(row["difficulties"]))
         last_date=datetime.fromisoformat(latest["observed_at"]) if latest else None
+        # A failed or guided attempt resets *retention confirmation*. Historical
+        # success remains visible, but cannot certify present recall.
+        reset=max((i for i,r in enumerate(observed) if r["outcome"] in
+                   ("incorrect","guided")),default=-1)
+        independent_run=[r for r in observed[reset+1:] if _success(r)]
         since=round(_days(now,last_date),1) if last_date else None
         independent_successes=len(successes)
         spaced_1d=False
         spaced_7d=False
-        for i,earlier in enumerate(successes):
+        for i,earlier in enumerate(independent_run):
             if not earlier["exercise_ref"]:
                 continue
             older_time=datetime.fromisoformat(earlier["observed_at"])
-            for later in successes[i+1:]:
+            for later in independent_run[i+1:]:
                 # Different actual exercises must be demonstrated; simply
                 # repeating a problem after seeing the answer is not recall.
                 if (later["exercise_ref"] and later["exercise_ref"] != earlier["exercise_ref"]
@@ -253,10 +261,10 @@ class StudyTracker:
             status="short_delay_confirmed"
             interval=4
             label="Samostojno potrjeno po vsaj 1 dnevu; še ni tedensko preverjeno"
-        elif independent_successes > 1 and _success(latest):
-            status="same_period_practice"
+        elif len(independent_run) > 1 and _success(latest):
+            status="unconfirmed_repeated_practice"
             interval=2
-            label="Več samostojnih rešitev, brez dokaza trajnega pomnjenja"
+            label="Več uspehov, a brez ustreznega samostojnega preizkusa na drugi nalogi po razmiku"
         elif _success(latest):
             status="first_independent"
             interval=1 if latest["outcome"]=="independent_with_difficulty" else 2
@@ -277,6 +285,7 @@ class StudyTracker:
             "different_task_recall_after_1d":spaced_1d,
             "different_task_recall_after_7d":spaced_7d,
             "last_attempt_at":latest["observed_at"] if latest else None,
+            "last_recorded_event_at":attempts[-1]["observed_at"] if attempts else None,
             "days_since_last_attempt":since,
             "last_independent_at":last_success,
             "last_outcome":latest["outcome"] if latest else None,
@@ -359,6 +368,8 @@ class StudyTracker:
         with self.db() as conn:
             old=conn.execute("SELECT * FROM lessons WHERE subject_key=? AND lesson_key=?",
                              (_key(subject),_key(lesson))).fetchone()
+            if study_stage in ("started","completed") and not evidence and not (old and old["evidence"]):
+                raise ValueError("study progress requires observed evidence")
             if old:
                 # A blank parameter does not erase known confirmed dates.
                 scheduled_for=scheduled_for or old["scheduled_for"] or ""
