@@ -56,7 +56,7 @@ def test_repeat_same_exercise_week_later_is_not_retained(tmp_path):
     clock.forward(8)
     k=log(t,assessment="delayed_recall",ref="naloga 1")["knowledge"]
     assert k["different_task_recall_after_7d"] is False
-    assert k["status"]=="same_period_practice"
+    assert k["status"]=="unconfirmed_repeated_practice"
     assert k["review_due"] is False
 
 
@@ -208,3 +208,41 @@ def test_multiple_topics_and_subjects_appear_in_filtered_history(tmp_path):
     assert t.knowledge("Programiranje I")["count"]==1
     assert t.history("Programiranje I")["count"]==1
     assert t.reviews("Programiranje I")["count"]==1
+
+
+
+def test_self_report_after_real_practice_does_not_defer_review(tmp_path):
+    t,clock,_=tracker(tmp_path)
+    first=log(t)["knowledge"]
+    assert not first["review_due"]
+    clock.forward(4)
+    later=t.record_attempt("Osnove elektrotehnike I","Coulombov zakon",
+                           "guided","Uporabnik meni, da snov pozna.",
+                           assessment="self_report")
+    state=later["knowledge"]
+    assert state["status"]=="first_independent"
+    assert state["review_due"]
+    assert state["days_since_last_attempt"]==4.0
+    assert state["last_outcome"]=="independent"
+    assert state["attempts"]==2
+
+
+def test_failure_resets_old_week_later_evidence(tmp_path):
+    t,clock,_=tracker(tmp_path)
+    log(t,ref="A")
+    clock.forward(8)
+    log(t,ref="B",assessment="delayed_recall")
+    assert t.knowledge()["topics"][0]["different_task_recall_after_7d"] is True
+    clock.forward(1)
+    log(t,outcome="incorrect",ref="C")
+    clock.forward(1)
+    state=log(t,outcome="independent",ref="D")["knowledge"]
+    assert state["status"]=="first_independent"
+    assert state["different_task_recall_after_7d"] is False
+    assert state["independent_attempts"]==3  # historical successes still exist
+
+
+def test_cannot_mark_a_lecture_studied_from_no_evidence(tmp_path):
+    t,clock,_=tracker(tmp_path)
+    with pytest.raises(ValueError,match="requires observed evidence"):
+        t.record_lesson("Matematika I","Neznana lekcija","completed")
