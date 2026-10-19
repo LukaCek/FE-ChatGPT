@@ -3,11 +3,12 @@
 # No host ports are exposed; do not point the tunnel to nasui.cekluka.com.
 services:
   fe-server:
-    image: ghcr.io/lukacek/fe-chatgpt:1.1.1
+    image: ghcr.io/lukacek/fe-chatgpt:1.2.0
     restart: unless-stopped
     environment:
       FE_ROOT: /data/FE
       FE_INDEX: /var/lib/fe-index/fe-index.sqlite3
+      FE_STUDY_DB: /var/lib/fe-index/study-tracker.sqlite3
       FE_RESCAN_SECONDS: '180'
     volumes:
       - /mnt/tank/sync/FE:/data/FE:ro

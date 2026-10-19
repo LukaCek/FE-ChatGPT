@@ -2,7 +2,7 @@
 
 Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncthing continues managing the FE dataset. Google Drive is unnecessary.
 
-**Release:** `1.1.1` (do not assume deployed on TrueNAS until you explicitly update the app).
+**Release:** `1.2.0` (do not assume deployed on TrueNAS until you explicitly update the app).
 
 ## Features
 
@@ -27,7 +27,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
    sudo test -s /mnt/tank/apps/fe-mcp/secrets/openai_api_key && echo 'Tunnel key OK'
    ```
 4. Copy [deploy/truenas-compose.yaml](deploy/truenas-compose.yaml) to **Apps → Installed → fe-gradiva-chatgpt → Edit**, replacing `tunnel_TVOJ_ID` with your already-created OpenAI tunnel ID. Preserve the secret **as a file**; never paste API keys into YAML/GitHub.
-5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.1.1` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
+5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.2.0` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
 6. Verify `fe-server` shows healthy and `tunnel-client` shows Up. ChatGPT → Plugins → FE Gradiva → **Refresh** to discover the new tools.
 
    ```sh
@@ -54,7 +54,7 @@ pytest -q
 docker build -t fe-chatgpt:local .
 ```
 
-GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.1.1` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.1.
+GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.2.0` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.1.
 
 ### Security
 
@@ -68,3 +68,78 @@ The TrueNAS FE mount is read-only. No ports are published on the host. A dedicat
 - Exercise search verifies a numbered **VAJA/NALOGA** heading; a subpart such as `1.1(b)` must be inside that exercise block. Numeric mentions alone no longer count.
 - Document resolution requires a title/path match; kind or page count alone cannot produce an unrelated result.
 - On first startup, `index_status` may show indexing in progress. Wait until it finishes before testing blank-page counts.
+
+
+## v1.2.0 — spremljanje dejanskega znanja in učnega zaostajanja v ChatGPT
+
+Obstoječa e.FE mapa ostane **read-only**. Osebne učne ugotovitve niso
+vsebine profesorjevih PDF-jev, niso ChatGPT Memory in niso ugibanja na
+podlagi časa odpiranja datoteke. Zapisujejo se v povsem ločeno datoteko
+\`/mnt/tank/apps/fe-mcp/index/study-tracker.sqlite3\` (v vsebniku
+\`/var/lib/fe-index/study-tracker.sqlite3\`). Obstoječi indeks
+\`fe-index.sqlite3\` in ročni Samsung Notes se ne spreminjajo.
+
+### ChatGPT MCP orodja
+
+- **\`record_learning_attempt\`**: avtomatsko zabeleži dejansko opaženo
+  reševanje naloge. Izid mora biti \`incorrect\`, \`guided\`,
+  \`independent_with_difficulty\` ali \`independent\`. Shrani kratko
+  dokazilo, konkretne težave, oznako naloge in čas na strežniku.
+  \`assessment=practice\` (navadna vaja), \`delayed_recall\`
+  (nov samostojen preizkus po časovnem razmiku) ali \`self_report\`
+  (izjava učenca, **ni dokaz uspešno rešene naloge**).
+- **\`get_knowledge_state\`**: datum zadnje vaje, trenutna ocena na
+  podlagi dokazov, problematična področja, zapadla ponovitev. Izrecno
+  pove, ali je šlo za en uspeh, več uspehov istega dne, samostojni
+  preizkus na **drugi** nalogi čez vsaj 1 dan ali preverjanje po vsaj
+  7 dneh. Niti preizkus po 7 dneh še ne pomeni trajnega znanja.
+- **\`get_learning_history\`**: časovnica vaj in dokazi, tudi
+  razveljavljeni napačni samodejni vnosi.
+- **\`void_learning_attempt\`**: popravi napačno avtomatsko oceno z
+  revizijsko sledjo.
+- **\`get_due_reviews\`**: konservativen seznam ponovitev; pri enkratni
+  samostojni rešitvi čez 1–2 dni, pri reševanju s pomočjo ali napakah
+  prej, nato razmiki rastejo šele z novimi dokazi.
+- **\`record_lesson_progress\`** in **\`get_course_progress\`**:
+  razdelita potrjeno izvedene lekcije od načrtovanih predavanj in
+  lastnega napredka. **Objavljen PDF ni dokaz izvedenega predavanja**,
+  datum spremembe datoteke pa ni dokaz učenja.
+- **\`get_study_plan\`**: pripravi predlog učenja iz zapadlih ponovitev
+  in dejansko potrjenega zaostanka. Če še ni vnesenih podatkov o
+  izvedenih predavanjih, tega odkrito pove, ne izmisli si zaostanka.
+
+### Samodejni vnosi v klepetu — pomembne omejitve
+
+MCP opis strežnika usmerja ChatGPT, da med **dejanskim
+reševanjem** samodejno zapiše opaženo uspešnost, brez dodatnih obrazcev.
+Za pravilno rešitev po namigu uporabi \`guided\`, za samostojen poskus
+\`independent\`. Model ne sme pripisati uspeha, če je odgovor podal sam,
+če je učenec le prebral razlago ali pogledal profesorjevo datoteko.
+
+**Samodejnost je odvisna od tega, ali ChatGPT v posameznem pogovoru
+dejansko pokliče MCP orodje.** Sam strežnik ne vidi vseh pogovorov,
+ne posluša besedila klepetov in ne more samodejno rekonstruirati
+preteklih vaj. Med učenjem je smiselno preveriti, ali je bil zapis
+dejansko uspešno izveden, še posebej ob prvih preizkusih.
+
+Za dokaz obdržanega znanja je potrebna **druga naloga in
+neodvisna ponovitev čez čas**, ne enkrat rešena naloga in ne
+subjektivna samoocena. Hevristični intervali za ponavljanje niso
+znanstveno natančna verjetnost pomnjenja.
+
+### Namestitev in varnost
+
+1. V TrueNAS Apps nastavi samo sliko strežnika FE Gradiva na
+   \`ghcr.io/lukacek/fe-chatgpt:1.2.0\`.
+2. Ohraniti moraš **isti** že obstoječi RW mount:
+   \`/mnt/tank/apps/fe-mcp/index:/var/lib/fe-index:rw\`.
+   Po želji nastavi \`FE_STUDY_DB=/var/lib/fe-index/study-tracker.sqlite3\`.
+3. Ne spreminjaj tunela, ID-ja tunela, secret mounta in RO mounta FE.
+4. Po uspešnem zagonu v ChatGPT osveži plugin **FE Gradiva**,
+   preveri \`server_info.version\` in testno pokliči \`get_knowledge_state\`.
+5. Če želiš povrnitev na 1.1.1, lahko aplikacijo vrneš brez brisanja baze;
+   podatki v ločenem study-tracker.sqlite3 ostanejo shranjeni.
+
+Noben osebni zapis učnega napredka ne sme končati v javnem GitHub
+repozitoriju ali v Syncthingovi FE mapi. Uporabi pravice mape in
+poskrbi za redno varnostno kopiranje \`/mnt/tank/apps/fe-mcp/index\`.
