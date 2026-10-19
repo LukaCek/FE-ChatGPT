@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS attempts (
 );
 CREATE INDEX IF NOT EXISTS attempts_concept_date
     ON attempts(concept_id, observed_at DESC, id);
+CREATE TABLE IF NOT EXISTS attempt_voids (
+    attempt_id TEXT PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
+    voided_at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY,
     subject TEXT NOT NULL,
@@ -167,7 +172,7 @@ class StudyTracker:
         exercise_ref = _text(exercise_ref, "exercise_ref", 200, False)
         source_path = _text(source_path, "source_path", 400, False)
         attempt_id = _text(attempt_id, "attempt_id", 100, False) or str(uuid4())
-        if not isinstance(difficulties, list) or len(difficulties) > 8 if difficulties is not None else False:
+        if difficulties is not None and (not isinstance(difficulties,list) or len(difficulties)>8):
             raise ValueError("difficulties must be a short list")
         details = [_text(x, "difficulty", 100) for x in (difficulties or [])]
         if "not solved" in _key(evidence) and outcome == "independent":
@@ -200,7 +205,9 @@ class StudyTracker:
         now=now or self._now()
         concept=conn.execute("SELECT subject,topic FROM concepts WHERE id=?",(concept_id,)).fetchone()
         attempts=[dict(r) for r in conn.execute(
-            "SELECT * FROM attempts WHERE concept_id=? ORDER BY observed_at,id",(concept_id,))]
+            """SELECT a.* FROM attempts a LEFT JOIN attempt_voids v ON v.attempt_id=a.id
+               WHERE a.concept_id=? AND v.attempt_id IS NULL
+               ORDER BY a.observed_at,a.rowid""",(concept_id,))]
         successes=[r for r in attempts if _success(r)]
         latest=attempts[-1] if attempts else None
         counters=Counter(d for row in attempts for d in json.loads(row["difficulties"]))
@@ -280,6 +287,18 @@ class StudyTracker:
             "caveat":"A single correct solution never proves lasting memory. Re-test independently using a different exercise days later."
         }
 
+    def void_attempt(self,attempt_id:str,reason:str)->dict:
+        """Correct an incorrect automated observation without erasing history."""
+        attempt_id=_text(attempt_id,"attempt_id",100)
+        reason=_text(reason,"reason",350)
+        with self.db() as conn:
+            existing=conn.execute("SELECT concept_id FROM attempts WHERE id=?",(attempt_id,)).fetchone()
+            if not existing:raise ValueError("unknown attempt_id")
+            conn.execute("""INSERT OR IGNORE INTO attempt_voids(attempt_id,voided_at,reason)
+                            VALUES(?,?,?)""",(attempt_id,self._now().isoformat(),reason))
+            return {"voided":True,"attempt_id":attempt_id,
+                    "knowledge":self._knowledge_in_conn(conn,existing["concept_id"])}
+
     def knowledge(self,subject: str="",topic: str="",limit:int=100)->dict:
         subject=_text(subject,"subject",140,False)
         topic=_text(topic,"topic",180,False)
@@ -296,8 +315,10 @@ class StudyTracker:
         topic=_text(topic,"topic",180,False)
         limit=max(1,min(int(limit),200))
         query="""SELECT a.id,a.observed_at,a.outcome,a.assessment,a.exercise_ref,a.evidence,
-                        a.difficulties,a.source_path,c.subject,c.topic
-                 FROM attempts a JOIN concepts c ON c.id=a.concept_id WHERE 1=1"""
+                        a.difficulties,a.source_path,c.subject,c.topic,
+                        v.voided_at,v.reason AS void_reason
+                 FROM attempts a JOIN concepts c ON c.id=a.concept_id
+                 LEFT JOIN attempt_voids v ON v.attempt_id=a.id WHERE 1=1"""
         vals=[]
         if subject:query+=" AND c.subject_key=?";vals.append(_key(subject))
         if topic:query+=" AND c.topic_key=?";vals.append(_key(topic))
