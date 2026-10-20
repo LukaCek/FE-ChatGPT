@@ -3,7 +3,7 @@
 # No host ports are exposed; do not point the tunnel to nasui.cekluka.com.
 services:
   fe-server:
-    image: ghcr.io/lukacek/fe-chatgpt:1.2.0
+    image: ghcr.io/lukacek/fe-chatgpt:1.2.1
     restart: unless-stopped
     environment:
       FE_ROOT: /data/FE

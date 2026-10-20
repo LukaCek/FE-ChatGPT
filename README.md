@@ -2,7 +2,7 @@
 
 Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncthing continues managing the FE dataset. Google Drive is unnecessary.
 
-**Release:** `1.2.0` (do not assume deployed on TrueNAS until you explicitly update the app).
+**Release:** `1.2.1` (do not assume deployed on TrueNAS until you explicitly update the app).
 
 ## Features
 
@@ -27,7 +27,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
    sudo test -s /mnt/tank/apps/fe-mcp/secrets/openai_api_key && echo 'Tunnel key OK'
    ```
 4. Copy [deploy/truenas-compose.yaml](deploy/truenas-compose.yaml) to **Apps → Installed → fe-gradiva-chatgpt → Edit**, replacing `tunnel_TVOJ_ID` with your already-created OpenAI tunnel ID. Preserve the secret **as a file**; never paste API keys into YAML/GitHub.
-5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.2.0` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
+5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.2.1` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
 6. Verify `fe-server` shows healthy and `tunnel-client` shows Up. ChatGPT → Plugins → FE Gradiva → **Refresh** to discover the new tools.
 
    ```sh
@@ -143,3 +143,23 @@ znanstveno natančna verjetnost pomnjenja.
 Noben osebni zapis učnega napredka ne sme končati v javnem GitHub
 repozitoriju ali v Syncthingovi FE mapi. Uporabi pravice mape in
 poskrbi za redno varnostno kopiranje \`/mnt/tank/apps/fe-mcp/index\`.
+
+
+## v1.2.1 — obravnava napačnih/neobstoječih poti brez MCP napak
+
+- Tooli \`list_files\`, \`file_info\`, \`read_document\`, \`populated_pages\`
+  in \`annotate_page\` za pričakovane napake poti, tipa datoteke ali
+  strani vrnejo **strukturiran rezultat** z \`ok: false\`, \`error\`,
+  \`message\` in \`path\` namesto izjeme MCP \`INVALID_ARGUMENT\`.
+- \`list_files\` ohrani svoj seznam kot izhod: ob napaki vsebuje **en
+  objekt napake**; prazna obstoječa mapa še vedno vrne \`[]\`.
+- Napaka \`not_found\` ne pomeni nedelovanja MCP ali indeksa;
+  preveri obstoječo pot z \`list_files\` nadrejene mape.
+- \`recent_files\` in rekurzivni \`list_files\` med istočasnim delovanjem
+  Syncthing/Moodle Sync preskočita datoteko, ki je izginila med pregledom.
+- Izpisi napak ne vključujejo notranjih poti, piškotkov ali izvirnih
+  sporočil neznanih izjem. Resnične programske/SQLite napake se ne skrijejo.
+- Varnostne omejitve za \`../\`, simbolne povezave in nedovoljene tipe
+  datotek ostanejo nespremenjene.
+- Slika: \`ghcr.io/lukacek/fe-chatgpt:1.2.1\`; ohrani oba volumna in
+  obstoječo konfiguracijo \`tunnel-client\`.

@@ -12,6 +12,7 @@ from .core import StudyFiles, ALLOWED
 from .index import Index
 from .study import StudyTracker
 from .render import render_page
+from .tool_errors import file_tool_errors
 
 ROOT=StudyFiles(os.environ.get('FE_ROOT','/data/FE'))
 INDEX=Index(ROOT,os.environ.get('FE_INDEX','/var/lib/fe-index/fe-index.sqlite3'))
@@ -97,6 +98,7 @@ def refresh_index() -> dict:
     return {'requested':True,'message':'Scan starts soon; call index_status to check progress.'}
 
 @mcp.tool()
+@file_tool_errors(path_arg='directory',list_output=True)
 def list_files(directory:str='',recursive:bool=True,limit:int=100)->list[dict]:
     """List files in a FE directory, optionally recursive (up to 250 results)."""
     folder=ROOT.resolve(directory,is_dir=True)
@@ -105,7 +107,8 @@ def list_files(directory:str='',recursive:bool=True,limit:int=100)->list[dict]:
         result=[]
         for f in ROOT.iter_files():
             if f.is_relative_to(folder):
-                result.append(ROOT.info(f))
+                try:result.append(ROOT.info(f))
+                except (FileNotFoundError,PermissionError,OSError):continue
                 if len(result)>=limit:break
         return result
     result=[]
@@ -122,7 +125,16 @@ def list_files(directory:str='',recursive:bool=True,limit:int=100)->list[dict]:
 @mcp.tool()
 def recent_files(limit:int=20)->list[dict]:
     """List most recently modified FE files; modification can mean sync or copy, not necessarily studying."""
-    return [ROOT.info(p) for p in sorted(ROOT.iter_files(),key=lambda x:x.stat().st_mtime_ns,reverse=True)[:max(1,min(limit,100))]]
+    items=[]
+    for p in ROOT.iter_files():
+        try:
+            metadata=ROOT.info(p)
+            items.append((p.stat().st_mtime_ns,metadata))
+        except (FileNotFoundError,PermissionError,OSError):
+            # Syncthing may remove/rename a file during enumeration.
+            continue
+    items.sort(key=lambda row:row[0],reverse=True)
+    return [record for _,record in items[:max(1,min(limit,100))]]
 
 @mcp.tool()
 def recent_activity(date_local:str,limit:int=80)->dict:
@@ -130,6 +142,7 @@ def recent_activity(date_local:str,limit:int=80)->dict:
     return INDEX.activity(date_local,limit=limit)
 
 @mcp.tool()
+@file_tool_errors()
 def file_info(path:str)->dict:
     """File metadata and PDF page count."""
     p=ROOT.resolve(path)
@@ -140,6 +153,7 @@ def file_info(path:str)->dict:
     return data
 
 @mcp.tool()
+@file_tool_errors()
 def populated_pages(path:str,limit:int=100,only_unlabeled:bool=False)->dict:
     """Return numbered PDF pages with actual writing/content, skipping blank grid pages."""
     return INDEX.populated_pages(path,limit=limit,only_unlabeled=only_unlabeled)
@@ -165,11 +179,13 @@ def find_exercise(reference:str,subject:str='',limit:int=12)->dict:
     return INDEX.find_exercise(reference,subject,limit)
 
 @mcp.tool()
+@file_tool_errors()
 def annotate_page(path:str,page:int,label:str)->dict:
     """After viewing a page, save topic keywords/description into a separate INDEX (never into FE files)."""
     return INDEX.annotate(path,page,label)
 
 @mcp.tool()
+@file_tool_errors()
 def read_document(path:str,page:int=0,max_chars:int=16000)->dict:
     """Read selectable PDF text or text files. page=0 first pages, page=1 first page."""
     p=ROOT.resolve(path)
