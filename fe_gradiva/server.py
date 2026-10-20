@@ -13,6 +13,7 @@ from .index import Index
 from .study import StudyTracker
 from .render import render_page
 from .tool_errors import file_tool_errors
+from .study_errors import study_tool_errors
 
 ROOT=StudyFiles(os.environ.get('FE_ROOT','/data/FE'))
 INDEX=Index(ROOT,os.environ.get('FE_INDEX','/var/lib/fe-index/fe-index.sqlite3'))
@@ -238,6 +239,7 @@ def view_pdf_region(path:str,page:int,x0:float,y0:float,x1:float,y1:float,zoom:f
 # The FE material tree stays read-only. All observations are saved only in
 # /var/lib/fe-index/study-tracker.sqlite3 (a separate persistent SQLite DB).
 @mcp.tool()
+@study_tool_errors
 def record_learning_attempt(subject:str,topic:str,outcome:str,evidence:str,
                             assessment:str='practice',exercise_ref:str='',
                             difficulties:list[str]|None=None,source_path:str='',
@@ -258,6 +260,7 @@ def record_learning_attempt(subject:str,topic:str,outcome:str,evidence:str,
                                   exercise_ref,difficulties,source_path,attempt_id)
 
 @mcp.tool()
+@study_tool_errors
 def void_learning_attempt(attempt_id:str,reason:str)->dict:
     """Correct an inaccurate automated learning entry; preserve an audit record."""
     return TRACKER.void_attempt(attempt_id,reason)
@@ -282,6 +285,7 @@ def get_due_reviews(subject:str='',limit:int=30)->dict:
     return TRACKER.reviews(subject,limit)
 
 @mcp.tool()
+@study_tool_errors
 def record_lesson_progress(subject:str,lesson:str,study_stage:str,
                            scheduled_for:str='',taught_on:str='',evidence:str='',
                            source_kind:str='')->dict:

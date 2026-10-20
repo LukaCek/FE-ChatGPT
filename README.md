@@ -163,3 +163,18 @@ poskrbi za redno varnostno kopiranje \`/mnt/tank/apps/fe-mcp/index\`.
   datotek ostanejo nespremenjene.
 - Slika: \`ghcr.io/lukacek/fe-chatgpt:1.2.1\`; ohrani oba volumna in
   obstoječo konfiguracijo \`tunnel-client\`.
+
+## v1.2.2 — razumljive napake pri beleženju znanja
+
+- Pri `record_learning_attempt`, `record_lesson_progress` in
+  `void_learning_attempt` pričakovano napačni vhodni podatki vrnejo
+  `{"ok": false, "recorded": false, "error": "...", "message": "..."}`,
+  ne več nejasnega `Error executing tool ...`.
+- Pojasni nedovoljen `outcome`/`assessment`, neobstoječ `source_path`
+  (za naloge iz klepeta ga pusti praznega) ter ponovno uporabo
+  `attempt_id` z drugačno vsebino. Ne izpiše zasebnih poti ali evidence.
+- Ne spremeni pravil ocenjevanja ali že zabeleženih poskusov; napake
+  SQLite in drugi nepričakovani programski problemi ostanejo vidne.
+- Ohranjen je popravek v1.2.1 za napačne/neobstoječe poti pri branju.
+- Docker slika: `ghcr.io/lukacek/fe-chatgpt:1.2.2`. Nadgradi le
+  oznako slike strežnika, ohrani oba volumna in isto tunelsko povezavo.
