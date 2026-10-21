@@ -503,6 +503,9 @@ class StudyTracker:
                 (_key(subject), _key(name))).fetchone()
             if old:
                 stored = dict(old)
+                # Preserve original display casing on case-insensitive retries.
+                subject = stored["subject"]
+                name = stored["name"]
                 if cleaned is None:
                     cleaned = json.loads(stored["topics_json"])
                 if not scheduled_for and not clear_date:
