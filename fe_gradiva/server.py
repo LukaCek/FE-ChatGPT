@@ -11,6 +11,7 @@ from . import __version__
 from .core import StudyFiles, ALLOWED
 from .index import Index
 from .study import StudyTracker
+from .dashboard import build_curriculum_dashboard
 from .render import render_page
 from .tool_errors import file_tool_errors
 from .study_errors import study_tool_errors
@@ -45,7 +46,7 @@ mcp=MCPServer('FE Gradiva',version=__version__,instructions=(
     'assistant explanation, or the assistant solving an example. Never fabricate '
     'learning observations or backfill older conversations without evidence. '
     'During study planning use get_knowledge_state, get_due_reviews, '
-    'get_course_progress and get_study_plan. Confirmed lecture progress comes only '
+    'get_course_progress, get_curriculum_dashboard and get_study_plan. Confirmed lecture progress comes only '
     'from reliable user or academic sources, never inferred solely from an upload. '
     'If an assessment was misclassified, call void_learning_attempt with the reason. '
     'For exam planning, use get_exam_readiness per subject, and set_exam_assessment '
@@ -313,6 +314,40 @@ def get_course_progress(subject:str='')->dict:
     Upload dates or PDF modification times are NOT lecture dates.
     """
     return TRACKER.course_progress(subject)
+
+@mcp.tool()
+@study_tool_errors
+def get_curriculum_dashboard(subject:str='')->dict:
+    """Compare verified teaching, actual lesson completion and measured skill.
+
+    Include all four first-semester courses even when one has no dated evidence.
+    Frontiers are evidence-limited: a Moodle upload or a scheduled lecture never
+    counts as taught. No percentages of course coverage or guaranteed mastery.
+    Also report the health of the local Moodle mirror from its own status file.
+    """
+    result=build_curriculum_dashboard(TRACKER,subject)
+    sync={'status':'unavailable','source':'Spletna-ucilnica/STANJE.txt'}
+    try:
+        status_text=ROOT.resolve('Spletna-ucilnica/STANJE.txt').read_text(
+            encoding='utf-8',errors='replace')
+        allowed={
+            'Zadnja uspešna osvežitev':'last_success',
+            'Zadnji poskus':'last_attempt',
+            'Stanje zadnjega poskusa':'last_attempt_status',
+            'Tip napake':'error_type',
+        }
+        sync={'status':'available','source':'Spletna-ucilnica/STANJE.txt'}
+        for line in status_text.splitlines():
+            key,sep,value=line.partition(':')
+            if sep and key.strip() in allowed:
+                sync[allowed[key.strip()]]=value.strip()
+        if sync.get('last_attempt_status','').casefold()=='napaka':
+            sync['status']='error'
+    except (ValueError,PermissionError,OSError):
+        pass
+    result['moodle_sync']=sync
+    return result
+
 
 @mcp.tool()
 def get_study_plan(subject:str='',minutes:int=60)->dict:
