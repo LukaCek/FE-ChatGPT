@@ -178,3 +178,56 @@ poskrbi za redno varnostno kopiranje \`/mnt/tank/apps/fe-mcp/index\`.
 - Ohranjen je popravek v1.2.1 za napačne/neobstoječe poti pri branju.
 - Docker slika: `ghcr.io/lukacek/fe-chatgpt:1.2.2`. Nadgradi le
   oznako slike strežnika, ohrani oba volumna in isto tunelsko povezavo.
+
+
+## v1.3.0 — pripravljenost na kolokvije in izpite po predmetih
+
+Nova MCP-orodja hranijo podatke v **istem ločenem** \`study-tracker.sqlite3\`;
+ne spreminjajo datotek FE, Samsung Notes, obstoječih učnih poskusov,
+ocene znanja, rokov na Moodlu ali \`fe-index.sqlite3\`.
+
+- \`set_exam_assessment(subject,name,kind,scheduled_for,topics,source_kind,evidence,clear_date)\`:
+  ustvari ali posodobi posamezen \`kolokvij\` ali \`izpit\`. Obseg
+  \`topics\` je izrecno potrjen nabor **točnih imen tem**, kakršna uporablja
+  \`record_learning_attempt\` (npr. \`01_MAT\` + »Limite: ...«).
+  Roka ne nastavi iz datuma naložene datoteke. Pri potrjeni vsebini/roku sta
+  obvezna \`source_kind=user_confirmed|official_material\` in kratko
+  \`evidence\`. Neznan obseg je dovoljen (prazna lista).
+  Kasnejši klic brez \`topics\` in brez datuma obstoječih podatkov ne izbriše.
+  \`topics=[]\` izrecno izbriše obseg, \`clear_date=true\` odstrani datum.
+- \`get_exam_readiness(subject,kind,limit)\` poda stanje **vseh vnesenih**
+  kolokvijev in izpitov (ločeno po predmetu), dneve do potrjenega roka,
+  število nepregledanih, šibkih, prvič samostojno rešenih, ponovno preverjenih
+  po 1 dnevu ter potrjenih na drugi nalogi po 7 dneh.
+- \`independent_coverage_pct\`, \`delayed_recall_coverage_pct\` in
+  \`week_later_coverage_pct\` merijo izključno delež navedenih izpitnih tem
+  z opaženimi dokazi. **To ni napoved ocene, pripravljenosti ali verjetnosti
+  uspeha na izpitu.** Če obseg še ni znan, so odstotki \`null\` in
+  \`readiness=scope_unknown\`.
+- \`unconfigured_subjects\` prikaže tudi kode map predmetov iz
+  \`FE/1-semester\` (npr. \`01_MAT\`, \`02_FIZ_MiT\`, \`03_PROG\`,
+  \`04_ELE\`), ki še nimajo registriranih kolokvijev/izpitov.
+  Imena, obsegi in termini se ne izmišljajo.
+- Novi samostojni poskusi in poznejše preverjanje samodejno spremenijo
+  poročilo pripravljenosti. Napačen odgovor ali razveljavljen zapis takoj
+  zmanjša pokritost; samoporočilo in rešitev z namigom ne štejeta kot uspeh.
+- Posodobi le FE strežniško Docker sliko
+  \`ghcr.io/lukacek/fe-chatgpt:1.3.0\`; ohrani obstoječo mapo
+  \`/mnt/tank/apps/fe-mcp/index\`, FE read-only mount in tunnel client.
+  V ChatGPT osveži povezavo FE Gradiva, da odkrije novi dve orodji.
+- Če so bili dnevi, datumi ali obseg napačno registrirani, jih popravi
+  preko \`set_exam_assessment\` z dokazi; preteklih učnih poskusov se ne
+  briše. Predloge predmetov lahko po uspešnem deployu dodaš ročno.
+
+Primer po tem, ko je obseg dejansko potrjen:
+
+\`\`\`json
+{
+  "subject": "01_MAT",
+  "name": "1. kolokvij",
+  "kind": "kolokvij",
+  "topics": ["Limite: neposredno vstavljanje v zvezno funkcijo"],
+  "source_kind": "user_confirmed",
+  "evidence": "Uporabnik je izrecno potrdil, da je to tema kolokvija."
+}
+\`\`\`
