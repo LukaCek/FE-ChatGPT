@@ -104,6 +104,7 @@ podlagi časa odpiranja datoteke. Zapisujejo se v povsem ločeno datoteko
   razdelita potrjeno izvedene lekcije od načrtovanih predavanj in
   lastnega napredka. **Objavljen PDF ni dokaz izvedenega predavanja**,
   datum spremembe datoteke pa ni dokaz učenja.
+- **\`get_curriculum_dashboard\`**: dokazno zasnovan pregled prvega semestra (Matematika I, Mehanika in toplota, Programiranje I in Osnove elektrotehnike I). Ločeno prikaže zadnjo potrjeno obravnavano snov, zadnjo zaključeno učno enoto, odprte evidentirane sklope in samostojno preverjeno znanje. Pri manjkajočih podatkih vrne `null`, ne ocene odstotkov. Podaja tudi stanje lokalne sinhronizacije Moodle iz `Spletna-ucilnica/STANJE.txt`. Brez argumentov izpiše štiri predmete, s parametrom `subject='04_ELE'` pa izbran predmet. Gre samo za zabeleženo snov, ne celoten predmetnik.
 - **\`get_study_plan\`**: pripravi predlog učenja iz zapadlih ponovitev
   in dejansko potrjenega zaostanka. Če še ni vnesenih podatkov o
   izvedenih predavanjih, tega odkrito pove, ne izmisli si zaostanka.
