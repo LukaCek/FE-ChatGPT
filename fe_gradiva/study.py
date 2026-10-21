@@ -72,6 +72,22 @@ CREATE TABLE IF NOT EXISTS lessons (
     UNIQUE(subject_key, lesson_key)
 );
 CREATE INDEX IF NOT EXISTS lessons_subject ON lessons(subject_key);
+CREATE TABLE IF NOT EXISTS exam_assessments (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    subject_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    scheduled_for TEXT,
+    topics_json TEXT NOT NULL DEFAULT '[]',
+    source_kind TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(subject_key,name_key)
+);
+CREATE INDEX IF NOT EXISTS exam_assessments_subject ON exam_assessments(subject_key,kind);
 """
 
 
@@ -445,3 +461,180 @@ class StudyTracker:
         return {"budget_minutes":minutes,"allocated_minutes":minutes-remaining,
                 "tasks":tasks,"unallocated_minutes":remaining,
                 "warning":"This plan covers only recorded learning evidence and verified lecture progress; it cannot know untracked lessons."}
+
+    def set_exam_assessment(self, subject: str, name: str, kind: str,
+                            scheduled_for: str = "", topics: list[str] | None = None,
+                            source_kind: str = "", evidence: str = "",
+                            clear_date: bool = False) -> dict:
+        """Register/update an exam/kolokvij and its *verified* scope, not guessed syllabi.
+
+        Empty optional date and absent topics retain previously registered details.
+        topics=[] explicitly clears the scope. A date or nonempty scope requires
+        an auditable user/official source; no Moodle upload date is sufficient.
+        """
+        subject = _text(subject, "subject", 140)
+        name = _text(name, "name", 160)
+        kind = _text(kind, "kind", 30)
+        if kind not in {"kolokvij", "izpit"}:
+            raise ValueError("invalid exam kind")
+        scheduled_for = _date(scheduled_for, "scheduled_for")
+        source_kind = _text(source_kind, "source_kind", 40, False)
+        evidence = _text(evidence, "evidence", 500, False)
+        if source_kind and source_kind not in {"user_confirmed", "official_material"}:
+            raise ValueError("invalid exam source_kind")
+        if clear_date and scheduled_for:
+            raise ValueError("cannot set and clear exam date together")
+        if topics is not None:
+            if not isinstance(topics, list) or len(topics) > 120:
+                raise ValueError("topics must be a list of at most 120 items")
+            cleaned = [_text(x, "topic", 180) for x in topics]
+            keys = [_key(x) for x in cleaned]
+            if len(keys) != len(set(keys)):
+                raise ValueError("duplicate topics in assessment scope")
+        else:
+            cleaned = None
+        if (scheduled_for or (cleaned is not None and cleaned)) and (
+                not source_kind or not evidence):
+            raise ValueError("assessment date/scope requires verified source_kind and evidence")
+        now = self._now().isoformat()
+        with self.db() as conn:
+            old = conn.execute(
+                "SELECT * FROM exam_assessments WHERE subject_key=? AND name_key=?",
+                (_key(subject), _key(name))).fetchone()
+            if old:
+                stored = dict(old)
+                if cleaned is None:
+                    cleaned = json.loads(stored["topics_json"])
+                if not scheduled_for and not clear_date:
+                    scheduled_for = stored["scheduled_for"] or ""
+                if not source_kind:
+                    source_kind = stored["source_kind"]
+                if not evidence:
+                    evidence = stored["evidence"]
+                ident = stored["id"]
+                created = stored["created_at"]
+            else:
+                if cleaned is None:
+                    cleaned = []
+                ident = str(uuid4())
+                created = now
+            conn.execute(
+                """INSERT INTO exam_assessments
+                   (id,subject,subject_key,name,name_key,kind,scheduled_for,
+                    topics_json,source_kind,evidence,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(subject_key,name_key) DO UPDATE SET
+                   subject=excluded.subject,name=excluded.name,kind=excluded.kind,
+                   scheduled_for=excluded.scheduled_for,topics_json=excluded.topics_json,
+                   source_kind=excluded.source_kind,evidence=excluded.evidence,
+                   updated_at=excluded.updated_at""",
+                (ident,subject,_key(subject),name,_key(name),kind,
+                 scheduled_for or None,json.dumps(cleaned,ensure_ascii=False),
+                 source_kind,evidence,created,now))
+        return {"recorded": True, "id": ident, "subject": subject,
+                "name": name, "kind": kind, "scheduled_for": scheduled_for or None,
+                "topics": cleaned, "scope_confirmed": bool(cleaned),
+                "note": ("Scope and date are only recorded from specified evidence; "
+                         "no mastery is inferred from adding a topic.")}
+
+    def exam_readiness(self, subject: str = "", kind: str = "",
+                       limit: int = 100, known_subjects: list[str] | None = None) -> dict:
+        """Evidence-based readiness per assessment, without guessing exam questions.
+
+        independent_coverage_pct measures observed independently solved scope
+        topics, NOT probability of passing. A missing scope yields null metrics.
+        """
+        subject = _text(subject, "subject", 140, False)
+        kind = _text(kind, "kind", 30, False)
+        if kind and kind not in {"kolokvij", "izpit"}:
+            raise ValueError("invalid exam kind")
+        limit = max(1, min(int(limit), 200))
+        today = self._now().date()
+        with self.db() as conn:
+            q = "SELECT * FROM exam_assessments WHERE 1=1"
+            args = []
+            if subject:
+                q += " AND subject_key=?"
+                args.append(_key(subject))
+            if kind:
+                q += " AND kind=?"
+                args.append(kind)
+            q += " ORDER BY subject_key, COALESCE(scheduled_for,'9999'), kind, name_key LIMIT ?"
+            args.append(limit)
+            entries = [dict(r) for r in conn.execute(q,args)]
+            # Include known subjects that still have no registered assessment.
+            all_subjects = set(x for x in known_subjects or [] if isinstance(x,str))
+            for row in conn.execute("SELECT DISTINCT subject FROM concepts"):
+                all_subjects.add(row["subject"])
+            for row in conn.execute("SELECT DISTINCT subject FROM lessons"):
+                all_subjects.add(row["subject"])
+            for row in entries:
+                all_subjects.add(row["subject"])
+            if subject:
+                all_subjects = {s for s in all_subjects if _key(s)==_key(subject)}
+            scoped_keys = {_key(x["subject"]) for x in entries}
+            results = []
+            for exam in entries:
+                topics = json.loads(exam["topics_json"])
+                states = {}
+                for row in self._rows(conn, exam["subject"]):
+                    states[_key(row["topic"])] = self._knowledge_in_conn(conn,row["id"])
+                details = []
+                counts = {"week_confirmed":0,"day_confirmed":0,
+                          "independent":0,"needs_practice":0,"untested":0}
+                for name in topics:
+                    state = states.get(_key(name))
+                    status = state["status"] if state else "unassessed"
+                    if status == "week_later_confirmed":
+                        group = "week_confirmed"
+                    elif status == "short_delay_confirmed":
+                        group = "day_confirmed"
+                    elif status in ("first_independent","unconfirmed_repeated_practice"):
+                        group = "independent"
+                    elif status in ("needs_practice","needs_independent_test"):
+                        group = "needs_practice"
+                    else:
+                        group = "untested"
+                    counts[group] += 1
+                    details.append({
+                        "topic":name,"status":status,"group":group,
+                        "review_due":state["review_due"] if state else True,
+                        "last_attempt_at":state["last_attempt_at"] if state else None,
+                        "difficulty":state["common_difficulties"] if state else [],
+                    })
+                total = len(details)
+                independent = (counts["independent"]+counts["day_confirmed"]+
+                               counts["week_confirmed"])
+                confirmed = counts["day_confirmed"]+counts["week_confirmed"]
+                date_value = exam["scheduled_for"]
+                days_until = ((date.fromisoformat(date_value)-today).days
+                              if date_value else None)
+                # These are evidence *coverage* ratios, not predictive grades.
+                readiness = ("scope_unknown" if not total else
+                             "requires_practice" if counts["needs_practice"] or counts["untested"] else
+                             "needs_delayed_recall" if confirmed<total else
+                             "needs_week_later_recall" if counts["week_confirmed"]<total else
+                             "good_observed_evidence")
+                results.append({
+                    "id":exam["id"],"subject":exam["subject"],"name":exam["name"],
+                    "kind":exam["kind"],"scheduled_for":date_value,
+                    "days_until":days_until,"scope_topics":total,
+                    "scope_known":bool(total),"scope_source":exam["source_kind"],
+                    "scope_evidence":exam["evidence"],"updated_at":exam["updated_at"],
+                    "counts":counts,"independent_topics":independent,
+                    "delayed_recall_topics":confirmed,
+                    "independent_coverage_pct":round(100*independent/total) if total else None,
+                    "delayed_recall_coverage_pct":round(100*confirmed/total) if total else None,
+                    "week_later_coverage_pct":round(100*counts["week_confirmed"]/total) if total else None,
+                    "readiness":readiness,"topics":details,
+                })
+        return {
+            "count":len(results),"assessments":results,
+            "unconfigured_subjects":sorted(
+                (s for s in all_subjects if _key(s) not in scoped_keys),
+                key=_key),
+            "warning":("Coverage is an evidence-based proportion of the explicitly "
+                       "recorded exam scope, not a grade or likelihood of passing. "
+                       "Unknown scope, unobserved topics and unverified study "
+                       "cannot be treated as readiness."),
+        }
