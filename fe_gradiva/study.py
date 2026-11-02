@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS topic_aliases (
     PRIMARY KEY(subject_key,alias_key)
 );
 CREATE TABLE IF NOT EXISTS topic_merge_audit (
-    source_concept_id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_concept_id INTEGER NOT NULL,
     target_concept_id INTEGER NOT NULL,
     snapshot_json TEXT NOT NULL,
     evidence TEXT NOT NULL,
