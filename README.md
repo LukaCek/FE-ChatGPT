@@ -2,7 +2,7 @@
 
 Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncthing continues managing the FE dataset. Google Drive is unnecessary.
 
-**Release:** `1.2.1` (do not assume deployed on TrueNAS until you explicitly update the app).
+**Release:** `1.3.1` (do not assume deployed on TrueNAS until you explicitly update the app).
 
 ## Features
 
@@ -17,7 +17,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
 
 ## TrueNAS deployment
 
-1. Leave existing v1.0 running until the image is published and tests are green.
+1. Leave the installed version running until the new image is published and tests pass. Back up the private SQLite index before updating.
 2. In **Apps → Installed**, back up the working Compose configuration of `fe-gradiva-chatgpt`.
 3. Ensure these paths exist on the TrueNAS host:
 
@@ -27,7 +27,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
    sudo test -s /mnt/tank/apps/fe-mcp/secrets/openai_api_key && echo 'Tunnel key OK'
    ```
 4. Copy [deploy/truenas-compose.yaml](deploy/truenas-compose.yaml) to **Apps → Installed → fe-gradiva-chatgpt → Edit**, replacing `tunnel_TVOJ_ID` with your already-created OpenAI tunnel ID. Preserve the secret **as a file**; never paste API keys into YAML/GitHub.
-5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.2.1` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
+5. `Save` to start `ghcr.io/lukacek/fe-chatgpt:1.3.1` (the workflow builds from `Dockerfile` on pushes to `main`). The GHCR package must be public for anonymous pull; if private, authenticate TrueNAS against GHCR before updating.
 6. Verify `fe-server` shows healthy and `tunnel-client` shows Up. ChatGPT → Plugins → FE Gradiva → **Refresh** to discover the new tools.
 
    ```sh
@@ -38,7 +38,7 @@ Private, read-only FE study-materials MCP server for TrueNAS SCALE 25.10. Syncth
 
 ### Rollback
 
-Restore the backed-up v1.0 YAML in the same TrueNAS app and Save. The new index is only in `/mnt/tank/apps/fe-mcp/index`; it is independent of the source FE folder. **Do not run `docker system prune --volumes`**. Do not start two tunnel clients with the same tunnel ID.
+Restore the backed-up previous YAML in the same TrueNAS app and Save. The new index is only in `/mnt/tank/apps/fe-mcp/index`; it is independent of the source FE folder. **Do not run `docker system prune --volumes`**. Do not start two tunnel clients with the same tunnel ID.
 
 ## API tools
 
@@ -54,7 +54,7 @@ pytest -q
 docker build -t fe-chatgpt:local .
 ```
 
-GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.2.0` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.1.
+GitHub Actions checks Python tests and container build. On a successful push to main, it publishes the `1.3.1` and `latest` tags to `ghcr.io/lukacek/fe-chatgpt` using `GITHUB_TOKEN` with `packages: write`. No API secret is stored in the repository. When changing code after release, use a new immutable version tag rather than silently replacing 1.1.1.
 
 ### Security
 
