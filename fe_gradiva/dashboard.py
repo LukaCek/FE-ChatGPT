@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
+from .subjects import canonical_subject, subject_key
 
 COURSES = {
     "01_MAT": "Matematika I",
@@ -40,14 +41,16 @@ def build_curriculum_dashboard(tracker, subject: str = "") -> dict:
                      for row in concepts]
     today = tracker._now().date()
     names = dict(COURSES)
-    names.update({row["subject"]: COURSES.get(row["subject"], row["subject"])
+    names.update({canonical_subject(row["subject"]):
+                  COURSES.get(canonical_subject(row["subject"]), row["subject"])
                   for row in lessons + knowledge})
     if subject:
-        names = {subject: names.get(subject, subject)}
+        code = canonical_subject(subject)
+        names = {code: names.get(code, code)}
     subjects = []
     for code, name in names.items():
-        ls = [r for r in lessons if r["subject"].casefold() == code.casefold()]
-        ts = [r for r in knowledge if r["subject"].casefold() == code.casefold()]
+        ls = [r for r in lessons if subject_key(r["subject"]) == subject_key(code)]
+        ts = [r for r in knowledge if subject_key(r["subject"]) == subject_key(code)]
         confirmed = sorted((r for r in ls if r["taught_on"] and
                             r["taught_on"] <= today.isoformat()),
                            key=lambda r: (r["taught_on"], r["lesson"]))
