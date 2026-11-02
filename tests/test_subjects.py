@@ -152,3 +152,16 @@ def test_topic_link_never_merges_cross_subject_or_unverified_topics(tmp_path):
     with pytest.raises(ValueError):
         t.merge_topics("01_MAT","Vektorji","Električno polje","Ni isti predmet.")
     assert t.history()["count"] == 2
+
+
+def test_backlog_distinguishes_unstarted_and_partially_studied(tmp_path):
+    from datetime import datetime, timezone
+    t=StudyTracker(tmp_path / "study.db",
+                   clock=lambda: datetime(2026,11,2,12,tzinfo=timezone.utc))
+    for name,stage in [("Odvodi","not_started"),("Integrali","started")]:
+        t.record_lesson("Matematika I", name, stage, taught_on="2026-10-20",
+                        source_kind="verified_class_notes", evidence="Datiran zapis.")
+    progress=t.course_progress("01_MAT")
+    assert progress["behind_count"] == 2
+    assert progress["not_started_count"] == 1
+    assert progress["in_progress_count"] == 1
