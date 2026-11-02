@@ -539,8 +539,13 @@ class StudyTracker:
                                  "scheduled_for":row["scheduled_for"],
                                  "status":"scheduled_not_confirmed_taught"})
         return {"lessons":len(rows),"studied":sum(x["study_stage"]=="completed" for x in rows),
-                "behind_count":len(behind),"behind":behind,"scheduled_unconfirmed":upcoming,
-                "warning":"Backlog counts only confirmed past lessons, not Moodle upload dates."}
+                "behind_count":len(behind),
+                "not_started_count":sum(x["study_stage"]=="not_started" for x in behind),
+                "in_progress_count":sum(x["study_stage"]=="started" for x in behind),
+                "behind":behind,"scheduled_unconfirmed":upcoming,
+                "warning":("Unfinished confirmed lessons include both never-started and "
+                           "partially studied lessons; this is not a count of missed classes. "
+                           "Moodle uploads alone do not count.")}
 
     def study_plan(self,subject:str="",minutes:int=60)->dict:
         minutes=max(10,min(int(minutes),240))
