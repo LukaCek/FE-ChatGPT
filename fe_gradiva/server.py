@@ -45,6 +45,18 @@ mcp=MCPServer('FE Gradiva',version=__version__,instructions=(
     'Never infer skill mastery from opening PDFs, timestamps, teacher notes, an '
     'assistant explanation, or the assistant solving an example. Never fabricate '
     'learning observations or backfill older conversations without evidence. '
+    'If two previously recorded topics are proven identical, use '
+    'link_equivalent_topics only with direct verified evidence or explicit '
+    'student confirmation, never an automatic semantic guess. '
+    'Before recording an attempt, reuse the existing precise topic label from '
+    'get_knowledge_state or get_learning_history when the same verified concept '
+    'is being practiced again; do not guess that two similarly worded topics '
+    'are equivalent. Use a stable exercise_ref and attempt_id for retries. '
+    'Never say a study record was saved unless a write tool response confirms '
+    'recorded=true or duplicate=true. On a write error report it and retry only '
+    'when safe, without creating a second entry. '
+    'The aliases Matematika I/01_MAT and Elektrotehnika I/04_ELE reference '
+    'the same course and should not appear as separate progress histories. '
     'During study planning use get_knowledge_state, get_due_reviews, '
     'get_course_progress, get_curriculum_dashboard and get_study_plan. Confirmed lecture progress comes only '
     'from reliable user or academic sources, never inferred solely from an upload. '
@@ -271,6 +283,19 @@ def record_learning_attempt(subject:str,topic:str,outcome:str,evidence:str,
 def void_learning_attempt(attempt_id:str,reason:str)->dict:
     """Correct an inaccurate automated learning entry; preserve an audit record."""
     return TRACKER.void_attempt(attempt_id,reason)
+
+@mcp.tool()
+@study_tool_errors
+def link_equivalent_topics(subject:str,source_topic:str,target_topic:str,evidence:str)->dict:
+    """Merge only two verified equivalent topics of the SAME subject.
+
+    A precise source and target topic must already exist in learning history.
+    Use ONLY after explicit user confirmation or directly verified evidence
+    that they mean the same skill. Never merge on text similarity alone.
+    Preserves attempt IDs, voids and audit snapshots, including exam scopes.
+    """
+    return TRACKER.merge_topics(subject,source_topic,target_topic,evidence)
+
 
 @mcp.tool()
 def get_knowledge_state(subject:str='',topic:str='',limit:int=100)->dict:
