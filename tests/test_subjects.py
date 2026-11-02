@@ -107,3 +107,48 @@ def test_exam_scope_legacy_collision_preserves_both_scopes(tmp_path):
     report = t.exam_readiness("Matematika I")
     assert report["count"] == 1
     assert {r["topic"] for r in report["assessments"][0]["topics"]} == {"Limite","Odvodi"}
+
+
+def test_explicit_topic_link_preserves_attempts_voids_and_exam_scope(tmp_path):
+    db = tmp_path / "study.db"
+    t = StudyTracker(db)
+    old = t.record_attempt(
+        "Elektrotehnika I", "Gaussov zakon: lupina", "incorrect",
+        "Napačen zaobjeti naboj", attempt_id="gauss-old")
+    t.void_attempt(old["attempt_id"], "Napačna klasifikacija")
+    t.record_attempt(
+        "04_ELE", "Krogelna lupina in Gaussov zakon", "independent",
+        "Pravilno rešil novo nalogo", attempt_id="gauss-new")
+    t.set_exam_assessment(
+        "04_ELE", "1. kolokvij", "kolokvij",
+        topics=["Gaussov zakon: lupina", "Krogelna lupina in Gaussov zakon"],
+        source_kind="user_confirmed", evidence="Uporabnik potrdil obseg.")
+    merged = t.merge_topics(
+        "Elektrotehnika I", "Gaussov zakon: lupina",
+        "Krogelna lupina in Gaussov zakon",
+        "Obe oznaki sta ročno preverjeno ista učna tema.")
+    assert merged["merged"]
+    assert t.knowledge("04_ELE")["count"] == 1
+    assert t.history("04_ELE")["count"] == 2
+    assert t.history("Elektrotehnika I", "Gaussov zakon: lupina")["count"] == 2
+    assert t.exam_readiness("04_ELE")["assessments"][0]["scope_topics"] == 1
+    assert t.merge_topics("04_ELE","Gaussov zakon: lupina",
+                          "Krogelna lupina in Gaussov zakon","Ponovitev")["duplicate"]
+    added = t.record_attempt("04_ELE", "Gaussov zakon: lupina", "guided",
+                             "Rešil z namigom", attempt_id="gauss-later")
+    assert added["recorded"]
+    assert t.knowledge("04_ELE","Krogelna lupina in Gaussov zakon")["topics"][0]["attempts"] == 2
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM attempt_voids").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM topic_merge_audit").fetchone()[0] == 1
+    assert StudyTracker(db).history("04_ELE")["count"] == 3
+
+
+def test_topic_link_never_merges_cross_subject_or_unverified_topics(tmp_path):
+    import pytest
+    t = StudyTracker(tmp_path / "study.db")
+    t.record_attempt("01_MAT","Vektorji","independent","Pravilno.")
+    t.record_attempt("04_ELE","Električno polje","independent","Pravilno.")
+    with pytest.raises(ValueError):
+        t.merge_topics("01_MAT","Vektorji","Električno polje","Ni isti predmet.")
+    assert t.history()["count"] == 2
