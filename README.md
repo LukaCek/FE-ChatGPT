@@ -232,3 +232,29 @@ Primer po tem, ko je obseg dejansko potrjen:
   "evidence": "Uporabnik je izrecno potrdil, da je to tema kolokvija."
 }
 \`\`\`
+
+## v1.3.1 — enotna identiteta predmetov in ohranjena učna evidenca
+
+- Funkcije za znanje, zgodovino, ponavljanje, lekcije, učne načrte, izpite
+  in pregled predmetov uporabljajo **isti ključ predmeta**.
+  `Matematika I` in `01_MAT` ter `Elektrotehnika I` in `04_ELE`
+  so enakovredna imena. Velja tudi za znane različice imen fizike in
+  Programiranja I, nikakor pa ne za Programiranje II.
+- Ob prvem zagonu se stari zapisi z različnimi oznakami predmetov uskladijo
+  v zasebni bazi `study-tracker.sqlite3`. Pri podvojenem zapisu iste
+  teme se ohranijo vsi poskusi, ID-ji poskusov, časovni podatki in
+  razveljavitve. Prvotne spremenjene vrstice so arhivirane v
+  `subject_alias_migration_archive` znotraj **zasebne** baze.
+- Pri podvojeni lekciji se obdrži najvišja zabeležena stopnja učenja,
+  pri dveh dokazno določenih obsegih istega preverjanja pa unija tem.
+  Izvirni podatki ob konfliktu ostanejo v migracijskem arhivu.
+- **Pred nadgradnjo** ustavi strežnik in varnostno kopiraj
+  `/mnt/tank/apps/fe-mcp/index`, vključno s podatkovno bazo in
+  morebitnima datotekama `-wal` in `-shm`. Pri vračanju na starejšo
+  aplikacijo obdrži varnostno kopijo.
+- Slika nove strežniške izdaje:
+  `ghcr.io/lukacek/fe-chatgpt:1.3.1`. FE mount ostane read-only;
+  obstoječi tunel in Syncthing se ne spreminjata.
+- Podobno poimenovanih **učnih tem**, ki bi lahko pomenile različne
+  koncepte, ne združujemo samodejno po ugibanju. Za to je potrebna
+  ločena preverjena povezava.
