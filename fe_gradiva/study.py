@@ -89,6 +89,21 @@ CREATE TABLE IF NOT EXISTS exam_assessments (
     UNIQUE(subject_key,name_key)
 );
 CREATE INDEX IF NOT EXISTS exam_assessments_subject ON exam_assessments(subject_key,kind);
+CREATE TABLE IF NOT EXISTS topic_aliases (
+    subject_key TEXT NOT NULL,
+    alias_key TEXT NOT NULL,
+    concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    confirmed_at TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    PRIMARY KEY(subject_key,alias_key)
+);
+CREATE TABLE IF NOT EXISTS topic_merge_audit (
+    source_concept_id INTEGER PRIMARY KEY,
+    target_concept_id INTEGER NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    merged_at TEXT NOT NULL
+);
 """
 
 
@@ -198,6 +213,13 @@ class StudyTracker:
         subject = canonical_subject(subject)
         instant = self._now().isoformat()
         with self.db() as conn:
+            linked = conn.execute(
+                """SELECT c.topic FROM topic_aliases t
+                   JOIN concepts c ON c.id=t.concept_id
+                   WHERE t.subject_key=? AND t.alias_key=?""",
+                (subject_key(subject), _key(topic))).fetchone()
+            if linked:
+                topic = linked["topic"]
             prior = conn.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             if prior:
                 data = conn.execute("SELECT c.subject,c.topic FROM concepts c WHERE c.id=?",
@@ -332,13 +354,83 @@ class StudyTracker:
             return {"voided":True,"attempt_id":attempt_id,
                     "knowledge":self._knowledge_in_conn(conn,existing["concept_id"])}
 
+    def merge_topics(self,subject:str,source_topic:str,target_topic:str,evidence:str)->dict:
+        """Link two ALREADY VERIFIED equivalent topics; never infer from wording.
+
+        Preserves attempts, voids, and snapshots of original concept/exam scopes.
+        The alias remains active for later attempts recorded with the old label.
+        """
+        subject=canonical_subject(_text(subject,"subject",140))
+        source_topic=_text(source_topic,"source_topic",180)
+        target_topic=_text(target_topic,"target_topic",180)
+        evidence=_text(evidence,"evidence",500)
+        if _key(source_topic)==_key(target_topic):
+            raise ValueError("source_topic and target_topic must be different")
+        sk=subject_key(subject)
+        with self.db() as conn:
+            source=conn.execute(
+                "SELECT * FROM concepts WHERE subject_key=? AND topic_key=?",
+                (sk,_key(source_topic))).fetchone()
+            target=conn.execute(
+                "SELECT * FROM concepts WHERE subject_key=? AND topic_key=?",
+                (sk,_key(target_topic))).fetchone()
+            already=conn.execute(
+                "SELECT concept_id FROM topic_aliases WHERE subject_key=? AND alias_key=?",
+                (sk,_key(source_topic))).fetchone()
+            if already and target and already["concept_id"]==target["id"]:
+                return {"ok":True,"merged":False,"duplicate":True,
+                        "subject":subject,"topic":target["topic"]}
+            if not source or not target:
+                raise ValueError("Both verified topics must already exist in the same subject")
+            now=self._now().isoformat()
+            exams=[dict(row) for row in conn.execute(
+                "SELECT * FROM exam_assessments WHERE subject_key=?",(sk,))]
+            snapshot={"source":dict(source),"target":dict(target),"exam_scopes":exams}
+            conn.execute(
+                """INSERT INTO topic_merge_audit
+                   (source_concept_id,target_concept_id,snapshot_json,evidence,merged_at)
+                   VALUES(?,?,?,?,?)""",
+                (source["id"],target["id"],json.dumps(snapshot,ensure_ascii=False),
+                 evidence,now))
+            conn.execute("UPDATE attempts SET concept_id=? WHERE concept_id=?",
+                         (target["id"],source["id"]))
+            conn.execute("UPDATE topic_aliases SET concept_id=? WHERE concept_id=?",
+                         (target["id"],source["id"]))
+            conn.execute(
+                """INSERT INTO topic_aliases(subject_key,alias_key,concept_id,confirmed_at,evidence)
+                   VALUES(?,?,?,?,?)""",
+                (sk,source["topic_key"],target["id"],now,evidence))
+            for exam in exams:
+                topics=json.loads(exam["topics_json"])
+                revised=[];seen=set()
+                for item in topics:
+                    name=target["topic"] if _key(item)==source["topic_key"] else item
+                    if _key(name) not in seen:
+                        seen.add(_key(name));revised.append(name)
+                if revised!=topics:
+                    conn.execute("UPDATE exam_assessments SET topics_json=? WHERE id=?",
+                                 (json.dumps(revised,ensure_ascii=False),exam["id"]))
+            conn.execute("DELETE FROM concepts WHERE id=?",(source["id"],))
+            return {"ok":True,"merged":True,"duplicate":False,
+                    "subject":subject,"topic":target["topic"],
+                    "moved_attempts":conn.execute(
+                        "SELECT COUNT(*) FROM attempts WHERE concept_id=?",
+                        (target["id"],)).fetchone()[0],
+                    "knowledge":self._knowledge_in_conn(conn,target["id"])}
+
     def knowledge(self,subject: str="",topic: str="",limit:int=100)->dict:
         subject=_text(subject,"subject",140,False)
         topic=_text(topic,"topic",180,False)
         limit=max(1,min(int(limit),200))
         with self.db() as conn:
+            if topic and subject:
+                alias=conn.execute(
+                    """SELECT c.topic FROM topic_aliases t JOIN concepts c ON c.id=t.concept_id
+                       WHERE t.subject_key=? AND t.alias_key=?""",
+                    (subject_key(subject),_key(topic))).fetchone()
+                if alias:topic=alias["topic"]
             concepts=self._rows(conn,subject)
-            if topic:concepts=[c for c in concepts if c["topic"].casefold()==topic.casefold()]
+            if topic:concepts=[c for c in concepts if _key(c["topic"])==_key(topic)]
             states=[self._knowledge_in_conn(conn,c["id"]) for c in concepts[:limit]]
         return {"count":len(states),"topics":states,"explanation":
                 "Only observed attempts. Never interpret a single correct exercise as long-term mastery."}
@@ -354,6 +446,13 @@ class StudyTracker:
                  LEFT JOIN attempt_voids v ON v.attempt_id=a.id WHERE 1=1"""
         vals=[]
         if subject:query+=" AND c.subject_key=?";vals.append(subject_key(subject))
+        if topic and subject:
+            with self.db() as conn:
+                alias=conn.execute(
+                    """SELECT c.topic_key FROM topic_aliases t JOIN concepts c ON c.id=t.concept_id
+                       WHERE t.subject_key=? AND t.alias_key=?""",
+                    (subject_key(subject),_key(topic))).fetchone()
+                if alias:topic=alias["topic_key"]
         if topic:query+=" AND c.topic_key=?";vals.append(_key(topic))
         query+=" ORDER BY a.observed_at DESC,a.rowid DESC LIMIT ?";vals.append(limit)
         with self.db() as conn:
