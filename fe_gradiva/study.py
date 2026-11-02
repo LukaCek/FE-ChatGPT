@@ -16,6 +16,7 @@ import re
 import sqlite3
 import unicodedata
 from uuid import uuid4
+from .subjects import canonical_subject, subject_key, migrate_subjects
 
 OUTCOMES = {"incorrect", "guided", "independent_with_difficulty", "independent"}
 ASSESSMENTS = {"practice", "delayed_recall", "self_report"}
@@ -141,6 +142,7 @@ class StudyTracker:
         with self.db() as conn:
             conn.executescript(SCHEMA)
             conn.execute("PRAGMA journal_mode=WAL")
+            migrate_subjects(conn)
 
     @contextmanager
     def db(self):
@@ -166,7 +168,7 @@ class StudyTracker:
         args = ()
         if subject:
             q += " WHERE c.subject_key=?"
-            args = (_key(subject),)
+            args = (subject_key(subject),)
         q += " ORDER BY c.subject_key,c.topic_key"
         return conn.execute(q, args).fetchall()
 
@@ -193,13 +195,14 @@ class StudyTracker:
         details = [_text(x, "difficulty", 100) for x in (difficulties or [])]
         if "not solved" in _key(evidence) and outcome == "independent":
             raise ValueError("contradictory evidence")
+        subject = canonical_subject(subject)
         instant = self._now().isoformat()
         with self.db() as conn:
             prior = conn.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             if prior:
                 data = conn.execute("SELECT c.subject,c.topic FROM concepts c WHERE c.id=?",
                                     (prior["concept_id"],)).fetchone()
-                if (_key(data["subject"]),_key(data["topic"])) != (_key(subject),_key(topic)):
+                if (subject_key(data["subject"]),_key(data["topic"])) != (subject_key(subject),_key(topic)):
                     raise ValueError("attempt_id already used for another concept")
                 if (prior["outcome"] != outcome or prior["assessment"] != assessment or
                     prior["exercise_ref"] != exercise_ref or prior["evidence"] != evidence or
@@ -210,9 +213,9 @@ class StudyTracker:
                         "knowledge": self._knowledge_in_conn(conn,prior["concept_id"])}
             conn.execute("""INSERT OR IGNORE INTO concepts(subject,topic,subject_key,topic_key,created_at)
                             VALUES(?,?,?,?,?)""",
-                         (subject,topic,_key(subject),_key(topic),instant))
+                         (subject,topic,subject_key(subject),_key(topic),instant))
             concept = conn.execute("SELECT id FROM concepts WHERE subject_key=? AND topic_key=?",
-                                   (_key(subject),_key(topic))).fetchone()["id"]
+                                   (subject_key(subject),_key(topic))).fetchone()["id"]
             conn.execute("""INSERT INTO attempts(id,concept_id,observed_at,outcome,assessment,
                             exercise_ref,evidence,difficulties,source_path)
                             VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -350,7 +353,7 @@ class StudyTracker:
                  FROM attempts a JOIN concepts c ON c.id=a.concept_id
                  LEFT JOIN attempt_voids v ON v.attempt_id=a.id WHERE 1=1"""
         vals=[]
-        if subject:query+=" AND c.subject_key=?";vals.append(_key(subject))
+        if subject:query+=" AND c.subject_key=?";vals.append(subject_key(subject))
         if topic:query+=" AND c.topic_key=?";vals.append(_key(topic))
         query+=" ORDER BY a.observed_at DESC,a.rowid DESC LIMIT ?";vals.append(limit)
         with self.db() as conn:
@@ -373,7 +376,7 @@ class StudyTracker:
                       scheduled_for:str="",taught_on:str="",evidence:str="",
                       source_kind:str="") -> dict:
         """Only confirmed teaching can count as behind; a new PDF never proves a lecture happened."""
-        subject=_text(subject,"subject",140)
+        subject=canonical_subject(_text(subject,"subject",140))
         lesson=_text(lesson,"lesson",180)
         study_stage=_text(study_stage,"study_stage",30)
         if study_stage not in STUDY_STAGES:raise ValueError("invalid study_stage")
@@ -388,7 +391,7 @@ class StudyTracker:
         now=self._now().isoformat()
         with self.db() as conn:
             old=conn.execute("SELECT * FROM lessons WHERE subject_key=? AND lesson_key=?",
-                             (_key(subject),_key(lesson))).fetchone()
+                             (subject_key(subject),_key(lesson))).fetchone()
             if study_stage in ("started","completed") and not evidence and not (old and old["evidence"]):
                 raise ValueError("study progress requires observed evidence")
             if old:
@@ -408,7 +411,7 @@ class StudyTracker:
                 scheduled_for=excluded.scheduled_for,taught_on=excluded.taught_on,
                 studied_on=excluded.studied_on,study_stage=excluded.study_stage,
                 source_kind=excluded.source_kind,evidence=excluded.evidence,updated_at=excluded.updated_at""",
-                (subject,_key(subject),lesson,_key(lesson),scheduled_for or None,
+                (subject,subject_key(subject),lesson,_key(lesson),scheduled_for or None,
                  taught_on or None,studied_on,study_stage,source_kind,evidence,now))
         return {"recorded":True,"subject":subject,"lesson":lesson,
                 "study_stage":study_stage,"scheduled_for":scheduled_for or None,
@@ -418,7 +421,7 @@ class StudyTracker:
         subject=_text(subject,"subject",140,False)
         query="SELECT * FROM lessons"
         vals=[]
-        if subject:query+=" WHERE subject_key=?";vals.append(_key(subject))
+        if subject:query+=" WHERE subject_key=?";vals.append(subject_key(subject))
         query+=" ORDER BY subject_key,coalesce(taught_on,scheduled_for,'9999'),lesson_key"
         with self.db() as conn:
             rows=[dict(x) for x in conn.execute(query,vals)]
@@ -472,7 +475,7 @@ class StudyTracker:
         topics=[] explicitly clears the scope. A date or nonempty scope requires
         an auditable user/official source; no Moodle upload date is sufficient.
         """
-        subject = _text(subject, "subject", 140)
+        subject = canonical_subject(_text(subject, "subject", 140))
         name = _text(name, "name", 160)
         kind = _text(kind, "kind", 30)
         if kind not in {"kolokvij", "izpit"}:
@@ -500,7 +503,7 @@ class StudyTracker:
         with self.db() as conn:
             old = conn.execute(
                 "SELECT * FROM exam_assessments WHERE subject_key=? AND name_key=?",
-                (_key(subject), _key(name))).fetchone()
+                (subject_key(subject), _key(name))).fetchone()
             if old:
                 stored = dict(old)
                 # Preserve original display casing on case-insensitive retries.
@@ -531,7 +534,7 @@ class StudyTracker:
                    scheduled_for=excluded.scheduled_for,topics_json=excluded.topics_json,
                    source_kind=excluded.source_kind,evidence=excluded.evidence,
                    updated_at=excluded.updated_at""",
-                (ident,subject,_key(subject),name,_key(name),kind,
+                (ident,subject,subject_key(subject),name,_key(name),kind,
                  scheduled_for or None,json.dumps(cleaned,ensure_ascii=False),
                  source_kind,evidence,created,now))
         return {"recorded": True, "id": ident, "subject": subject,
@@ -558,7 +561,7 @@ class StudyTracker:
             args = []
             if subject:
                 q += " AND subject_key=?"
-                args.append(_key(subject))
+                args.append(subject_key(subject))
             if kind:
                 q += " AND kind=?"
                 args.append(kind)
@@ -566,16 +569,16 @@ class StudyTracker:
             args.append(limit)
             entries = [dict(r) for r in conn.execute(q,args)]
             # Include known subjects that still have no registered assessment.
-            all_subjects = set(x for x in known_subjects or [] if isinstance(x,str))
+            all_subjects = set(canonical_subject(x) for x in known_subjects or [] if isinstance(x,str))
             for row in conn.execute("SELECT DISTINCT subject FROM concepts"):
-                all_subjects.add(row["subject"])
+                all_subjects.add(canonical_subject(row["subject"]))
             for row in conn.execute("SELECT DISTINCT subject FROM lessons"):
-                all_subjects.add(row["subject"])
+                all_subjects.add(canonical_subject(row["subject"]))
             for row in entries:
-                all_subjects.add(row["subject"])
+                all_subjects.add(canonical_subject(row["subject"]))
             if subject:
-                all_subjects = {s for s in all_subjects if _key(s)==_key(subject)}
-            scoped_keys = {_key(x["subject"]) for x in entries}
+                all_subjects = {s for s in all_subjects if subject_key(s)==subject_key(subject)}
+            scoped_keys = {subject_key(x["subject"]) for x in entries}
             results = []
             for exam in entries:
                 topics = json.loads(exam["topics_json"])
@@ -634,7 +637,7 @@ class StudyTracker:
         return {
             "count":len(results),"assessments":results,
             "unconfigured_subjects":sorted(
-                (s for s in all_subjects if _key(s) not in scoped_keys),
+                (s for s in all_subjects if subject_key(s) not in scoped_keys),
                 key=_key),
             "warning":("Coverage is an evidence-based proportion of the explicitly "
                        "recorded exam scope, not a grade or likelihood of passing. "
