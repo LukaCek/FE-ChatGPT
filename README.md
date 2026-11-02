@@ -255,6 +255,9 @@ Primer po tem, ko je obseg dejansko potrjen:
 - Slika nove strežniške izdaje:
   `ghcr.io/lukacek/fe-chatgpt:1.3.1`. FE mount ostane read-only;
   obstoječi tunel in Syncthing se ne spreminjata.
-- Podobno poimenovanih **učnih tem**, ki bi lahko pomenile različne
-  koncepte, ne združujemo samodejno po ugibanju. Za to je potrebna
-  ločena preverjena povezava.
+- Podobno poimenovanih **učnih tem** ne združujemo samodejno. Novo
+  orodje `link_equivalent_topics` ju združi **samo ob izrecni potrditvi
+  ali preverjenem dokazilu**, da gre za isti koncept. Poskusi, ID-ji,
+  razveljavitve in izvirni izpitni obsegi se ohranijo; povezava deluje
+  tudi pri nadaljnjem beleženju pod starim imenom. Revizija je v zasebni
+  tabeli `topic_merge_audit`.
